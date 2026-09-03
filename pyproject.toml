@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-agent-engineering"
+version = "0.1.0"
+description = "Professional AI Agent Engineering — agents, tools, RAG, MCP, evaluation and production."
+readme = "README.md"
+requires-python = ">=3.14"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Fernando Silva" }
+]
+dependencies = [
+    "fastapi>=0.115",
+    "langgraph>=0.6",
+    "openai-agents>=0.3",
+    "pydantic>=2.10",
+    "python-dotenv>=1.0",
+    "uvicorn[standard]>=0.34",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.25",
+    "ruff>=0.11",
+]
+
+rag = [
+    "qdrant-client>=1.14",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
