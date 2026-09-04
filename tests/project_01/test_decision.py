@@ -24,3 +24,14 @@ def test_final_decision_does_not_require_query():
 def test_invalid_action_is_rejected():
     with pytest.raises(ValidationError):
         ResearchDecision(action="invalid")
+
+def test_search_decision_rejects_missing_query():
+    with pytest.raises(ValidationError):
+        ResearchDecision(action="search")
+
+def test_final_decision_rejects_query():
+    with pytest.raises(ValidationError):
+        ResearchDecision(
+            action="final",
+            query="What is an AI agent?",
+        )
