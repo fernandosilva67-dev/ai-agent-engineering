@@ -10,7 +10,7 @@ class ResearchDecision(BaseModel):
     query: str | None = None
 
     @model_validator(mode="after")
-    def validate_query(self) -> "ResearchDecision":
+    def validate_query(self) -> ResearchDecision:
         """Ensure search decisions contain a query."""
         if self.action == "search" and not self.query:
             raise ValueError("Search decisions require a query.")

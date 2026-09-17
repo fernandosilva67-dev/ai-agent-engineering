@@ -14,7 +14,7 @@ class ResearchAgent:
         decision = self.decision_maker.decide(request.question)
 
         if decision.action == "search":
-            result = search(decision.query or request.question)
+            result = search(decision.query)
 
             return ResearchResponse(
                 answer=result.content,

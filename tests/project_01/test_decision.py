@@ -1,6 +1,5 @@
 import pytest
 from pydantic import ValidationError
-
 from research_agent.decision import ResearchDecision
 
 
@@ -25,9 +24,11 @@ def test_invalid_action_is_rejected():
     with pytest.raises(ValidationError):
         ResearchDecision(action="invalid")
 
+
 def test_search_decision_rejects_missing_query():
     with pytest.raises(ValidationError):
         ResearchDecision(action="search")
+
 
 def test_final_decision_rejects_query():
     with pytest.raises(ValidationError):
