@@ -13,9 +13,7 @@ class FinalDecisionMaker:
 def test_agent_researches_question():
     agent = ResearchAgent()
 
-    response = agent.run(
-        ResearchRequest(question="What is an AI agent?")
-    )
+    response = agent.run(ResearchRequest(question="What is an AI agent?"))
 
     assert response.answer
     assert "What is an AI agent?" in response.answer
@@ -23,13 +21,9 @@ def test_agent_researches_question():
 
 
 def test_agent_can_return_final_without_searching():
-    agent = ResearchAgent(
-        decision_maker=FinalDecisionMaker()
-    )
+    agent = ResearchAgent(decision_maker=FinalDecisionMaker())
 
-    response = agent.run(
-        ResearchRequest(question="What is an AI agent?")
-    )
+    response = agent.run(ResearchRequest(question="What is an AI agent?"))
 
     assert response.answer == "What is an AI agent?"
     assert response.sources == []
