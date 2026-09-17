@@ -15,6 +15,7 @@ authors = [
 dependencies = [
     "fastapi>=0.115",
     "langgraph>=0.6",
+    "openai>=3.7.0",
     "openai-agents>=0.3",
     "pydantic>=2.10",
     "python-dotenv>=1.0",
