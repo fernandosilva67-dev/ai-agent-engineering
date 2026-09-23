@@ -1,6 +1,7 @@
 from research_agent.agent import ResearchAgent
 from research_agent.decision import ResearchDecision
-from research_agent.models import ResearchRequest
+from research_agent.models import ResearchRequest, ResearchResult
+from research_agent.tool_executor import ToolExecutor
 
 
 class FinalDecisionMaker:
@@ -27,3 +28,20 @@ def test_agent_can_return_final_without_searching():
 
     assert response.answer == "What is an AI agent?"
     assert response.sources == []
+
+def test_agent_executes_search_through_tool_executor():
+    def fake_search(query: str) -> ResearchResult:
+        return ResearchResult(
+            source="injected_search",
+            content=f"Injected result for: {query}",
+        )
+
+    executor = ToolExecutor(search_tool=fake_search)
+    agent = ResearchAgent(tool_executor=executor)
+
+    response = agent.run(
+        ResearchRequest(question="What is native tool calling?")
+    )
+
+    assert response.answer == "Injected result for: What is native tool calling?"
+    assert response.sources == ["injected_search"]
