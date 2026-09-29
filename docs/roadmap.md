@@ -21,7 +21,7 @@ The Research Agent evolves incrementally from a basic deterministic agent into a
 | M02 | v0.2 | Decision Layer | ✅ Completed |
 | M03 | v0.3 | LLM Decision Maker | ✅ Completed |
 | M04 | v0.4 | Tool Calling | ✅ Completed |
-| M05 | v0.5 | Agent Loop & State | ⏳ Planned |
+| M05 | v0.5 | Agent Loop & State | ✅ Completed |
 | M06 | v0.6 | Planning | ⏳ Planned |
 | M07 | v0.7 | LangGraph | ⏳ Planned |
 | M08 | v0.8 | Memory | ⏳ Planned |
@@ -172,17 +172,58 @@ That orchestration belongs to M05.
 
 **Target:** Research Agent v0.5
 
-Introduce iterative agent execution.
+Introduce controlled iterative agent execution.
 
-Planned concepts:
+Implemented concepts:
 
 - Agent Loop
-- execution state
-- observations
+- `AgentState`
+- `Observation`
+- `ModelTurnResult`
+- `ToolRequested`
+- `FinalAnswer`
+- `ModelSession` Protocol
+- `OpenAIModelSession`
 - model continuation after tool execution
 - `function_call_output`
-- termination conditions
-- controlled iteration limits
+- provider continuation using `response_id` and `call_id`
+- explicit termination with `FinalAnswer`
+- controlled iteration using `max_steps`
+- deterministic offline testing of the complete loop
+
+### Execution path
+
+    Question
+       │
+       ▼
+    AgentState
+       │
+       ▼
+    ModelSession
+       │
+       ├── FinalAnswer ─────────────► ResearchResponse
+       │
+       └── ToolRequested
+                │
+                ▼
+           ToolExecutor
+                │
+                ▼
+           Observation
+                │
+                ▼
+        update AgentState
+                │
+                ▼
+    ModelSession.continue_with()
+                │
+                └───────────────────► next model turn
+
+Tool results are observations rather than automatic final answers.
+
+The application remains responsible for tool execution and loop control, while provider-specific continuation state remains isolated inside the model adapter.
+
+The complete automated test suite contains **39 passing tests**.
 
 ---
 
