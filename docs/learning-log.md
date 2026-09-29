@@ -673,6 +673,342 @@ The key principle remains the same:
 
 ---
 
+# M05 — Agent Loop & State
+
+Research Agent v0.5 introduces the first controlled iterative Agent Loop.
+
+The objective of this module was not to introduce LangGraph or a planning framework.
+
+The objective was to understand and implement the underlying execution mechanics directly:
+
+    decide
+       ↓
+     tool
+       ↓
+    observe
+       ↓
+    decide
+       ↓
+      ...
+       ↓
+     final
+
+## Architectural problem
+
+In v0.4, native Tool Calling ended after one tool execution:
+
+    Model
+      ↓
+    ToolCall
+      ↓
+    ToolExecutor
+      ↓
+    ResearchResult
+      ↓
+    ResearchResponse
+
+That architecture cannot support an agent that needs to use the result of a tool before deciding what to do next.
+
+v0.5 therefore changes the meaning of a tool result.
+
+A `ResearchResult` is no longer automatically the final answer.
+
+Instead:
+
+    ResearchResult
+         ↓
+    Observation
+         ↓
+     AgentState
+         ↓
+    next model turn
+
+This creates the feedback loop required for iterative agent execution.
+
+## AgentState
+
+`AgentState` was introduced to represent provider-independent execution state.
+
+It currently contains:
+
+- `question`
+- `observations`
+- `step_count`
+
+The state is intentionally small.
+
+It does not contain:
+
+- OpenAI client objects
+- model configuration
+- prompts
+- tools
+- `response_id`
+- `call_id`
+- `max_steps`
+
+This established an important design rule:
+
+**agent execution state and provider continuation state are different concerns.**
+
+## Observation
+
+`Observation` represents what the agent learns after a tool has been executed.
+
+It contains:
+
+- `tool_name`
+- `source`
+- `content`
+
+The execution flow is therefore:
+
+    ToolRequested
+         ↓
+    ToolExecutor
+         ↓
+    ResearchResult
+         ↓
+    Observation
+         ↓
+    AgentState
+
+Sources in the final `ResearchResponse` are derived from accumulated observations rather than duplicated in the state.
+
+## ModelTurnResult
+
+A model interaction can now produce two provider-independent outcomes:
+
+    ModelTurnResult
+    ├── ToolRequested
+    │      └── ToolCall
+    │
+    └── FinalAnswer
+           └── answer
+
+This makes termination explicit.
+
+`ToolRequested` means that the application must execute a tool and continue the interaction.
+
+`FinalAnswer` means that the Agent Loop can terminate.
+
+## ModelSession
+
+A new `ModelSession` Protocol defines iterative model interaction:
+
+    start(question) -> ModelTurnResult
+
+    continue_with(observation) -> ModelTurnResult
+
+This abstraction was introduced because iterative model execution requires continuation state.
+
+That state should not leak into the generic `ResearchAgent`.
+
+The Agent Loop therefore works with a provider-independent `ModelSession`.
+
+## OpenAIModelSession
+
+`OpenAIModelSession` implements the session contract for the OpenAI Responses API.
+
+The adapter maintains the provider-specific values:
+
+- `response_id`
+- `call_id`
+
+When OpenAI requests a function call:
+
+    OpenAI response
+         ↓
+    function_call
+         ↓
+    call_id
+         ↓
+    ToolRequested
+
+The application executes the tool.
+
+The resulting observation is then returned to the provider using:
+
+    function_call_output
+
+with the corresponding:
+
+    call_id
+
+The next request continues the provider interaction using:
+
+    previous_response_id
+
+This allows the model to inspect the tool result and either request another tool or produce the final answer.
+
+## Provider boundary
+
+A major architectural lesson from M05 is that provider orchestration metadata should remain at the provider boundary.
+
+The following remain provider-independent:
+
+- `AgentState`
+- `Observation`
+- `ToolCall`
+- `ToolRequested`
+- `FinalAnswer`
+- `ResearchResponse`
+
+OpenAI-specific continuation details remain inside `OpenAIModelSession`.
+
+This avoids coupling the core agent architecture to one model provider.
+
+## Agent Loop
+
+When a `ModelSession` is configured, `ResearchAgent` now performs the controlled loop:
+
+    create AgentState
+          ↓
+    ModelSession.start()
+          ↓
+      model turn
+          ↓
+       ┌──┴───────────────┐
+       │                  │
+ ToolRequested       FinalAnswer
+       │                  │
+       ↓                  ↓
+ ToolExecutor       ResearchResponse
+       │
+       ↓
+ Observation
+       │
+       ↓
+ update AgentState
+       │
+       ↓
+ ModelSession.continue_with()
+       │
+       └──────────────► next model turn
+
+The loop remains explicit Python code.
+
+LangGraph is deliberately postponed until M07 so that the underlying mechanics are understood before introducing a graph orchestration framework.
+
+## Loop safety
+
+Iterative agents require explicit execution limits.
+
+`ResearchAgent` therefore introduces:
+
+    max_steps
+
+The current default is:
+
+    max_steps = 5
+
+The limit counts tool executions.
+
+Before executing an additional requested tool, the agent checks whether the configured limit has already been reached.
+
+If so, execution terminates with a `RuntimeError`.
+
+This protects the application from uncontrolled or infinite Tool Calling loops.
+
+`max_steps` belongs to `ResearchAgent` rather than `AgentState` because it is execution policy, not accumulated execution state.
+
+## Backward compatibility
+
+The previous execution paths remain available.
+
+The current priority is:
+
+    ModelSession
+        ↓
+    ToolCallingClient
+        ↓
+    DecisionMaker
+
+This allows the architecture to evolve incrementally without deleting the mechanisms introduced in earlier modules.
+
+The older abstractions remain useful for understanding the progression from deterministic decisions to native Tool Calling and finally to iterative execution.
+
+## Testing
+
+M05 added deterministic tests for:
+
+- `AgentState`
+- `Observation`
+- `ToolRequested`
+- `FinalAnswer`
+- repeated Tool Calls
+- observation accumulation
+- final answer termination
+- source derivation
+- `max_steps`
+- OpenAI Tool Call parsing
+- `response_id`
+- `call_id`
+- `function_call_output`
+- provider continuation
+- invalid session continuation
+- complete ResearchAgent/OpenAIModelSession/ToolExecutor integration
+
+The integration test uses fake OpenAI responses and a fake search implementation.
+
+This validates the complete orchestration path without requiring:
+
+- an API key
+- network access
+- provider credits
+
+At the end of M05:
+
+**39 tests passed in the complete repository test suite.**
+
+Ruff also completed successfully.
+
+## Deliberately postponed
+
+M05 does not introduce:
+
+- Planning
+- task decomposition
+- replanning
+- LangGraph
+- Memory
+- sophisticated Tool Registry
+- parallel Tool Calls
+- multi-agent orchestration
+
+These capabilities are outside the scope of Research Agent v0.5.
+
+## Key lessons
+
+The main lessons from M05 are:
+
+1. A Tool Call is not the end of an agent interaction.
+2. A tool result becomes an observation that can influence the next model turn.
+3. Agent state and provider continuation state should remain separate.
+4. Provider-specific identifiers should remain behind the provider adapter.
+5. Agent loops require explicit termination semantics.
+6. Agent loops require bounded execution.
+7. External systems can be tested deterministically with fakes.
+8. Frameworks should be introduced only after the mechanisms they abstract are understood.
+
+## Next step
+
+M06 introduces:
+
+**Planning — Research Agent v0.6**
+
+The next architectural problem is no longer simply:
+
+    What should I do next?
+
+It becomes:
+
+    How should I decompose and execute a multi-step task?
+
+Planning will introduce explicit task decomposition and controlled plan execution without yet introducing LangGraph.
+
+---
+
 # Current Learning Status
 
 Project 01 has progressed through:
@@ -684,12 +1020,13 @@ Project 01 has progressed through:
 | M02 | v0.2 | Decision Layer | ✅ Completed |
 | M03 | v0.3 | LLM Decision Maker | ✅ Completed |
 | M04 | v0.4 | Tool Calling | ✅ Completed |
-| M05 | v0.5 | Agent Loop & State | ⏳ Next |
+| M05 | v0.5 | Agent Loop & State | ✅ Completed |
+| M06 | v0.6 | Planning | ⏳ Next |
 
 Current automated validation:
 
-**24 tests passing**
+**39 tests passing**
 
 Current development branch:
 
-`feat/01-research-agent-v04-tool-calling`
+`feat/01-research-agent-v05-agent-loop`
