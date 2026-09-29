@@ -24,9 +24,9 @@ Current evolution:
 | v0.2 | M02 | Decision Layer |
 | v0.3 | M03 | LLM Decision Maker |
 | v0.4 | M04 | Native Tool Calling |
-| v0.5 | M05 | Agent Loop & State — planned |
+| v0.5 | M05 | Agent Loop & State |
 
-The current implementation is **Research Agent v0.4**.
+The current implementation is **Research Agent v0.5**.
 
 ---
 
@@ -41,11 +41,15 @@ Current modules:
     research_agent/
     ├── __init__.py
     ├── agent.py
+    ├── agent_state.py
     ├── decision.py
     ├── decision_maker.py
     ├── model_client.py
+    ├── model_session.py
+    ├── model_turn.py
     ├── models.py
     ├── openai_model_client.py
+    ├── openai_model_session.py
     ├── tool_call.py
     ├── tool_calling_client.py
     ├── tool_executor.py
@@ -589,9 +593,410 @@ This tests the adapter contract without performing paid or network-dependent API
 
 # 23. Manual Integration Testing
 
-A manual native Tool Calling smoke test was prepared against the real OpenAI API.
+A manual native Tool Calling smoke test was attempted against the real OpenAI API during v0.4.
 
-The request successfully reached the API service, but model inference could not be completed beca appropriate.
+The intended validation path was:
+
+    OpenAI API
+         │
+         ▼
+    native function_call
+         │
+         ▼
+    OpenAIModelClient
+         │
+         ▼
+    validated ToolCall
+
+The request reached the OpenAI API, but model inference could not be completed because the API account had no remaining credits.
+
+The provider returned:
+
+    HTTP 429
+    code: credit_balance_exhausted
+
+This was an external billing condition rather than an application failure.
+
+No code change was made in response to this error.
+
+The real native `function_call` smoke test can be repeated when API credits are available.
+
+---
+
+# 24. v0.4 Scope Boundary
+
+Research Agent v0.4 implemented real native Tool Calling at the model/provider boundary.
+
+The underlying `search()` implementation remained simulated.
+
+Therefore:
+
+    Native Tool Calling     → real provider mechanism
+    Search implementation   → simulated application tool
+
+These are independent concerns.
+
+A live search provider is not required to understand or test the Tool Calling architecture.
+
+v0.4 deliberately postponed:
+
+- Agent Loop
+- repeated model/tool interactions
+- model continuation after tool execution
+- `function_call_output`
+- persistent execution state
+- planning
+- memory
+- LangGraph
+- sophisticated Tool Registry
+- multiple tools
+- multi-agent orchestration
+
+These boundaries define the architectural starting point for v0.5.
+
+---
+
+# 25. Evolution v0.5 — Agent Loop & State
+
+Research Agent v0.5 introduces controlled iterative execution.
+
+The architecture evolves from the single-execution v0.4 path:
+
+    Question
+       │
+       ▼
+     Model
+       │
+       ▼
+    ToolCall
+       │
+       ▼
+      Tool
+       │
+       ▼
+     Result
+       │
+       ▼
+    Response
+
+to an Agent Loop:
+
+    Question
+       │
+       ▼
+      State
+       │
+       ▼
+     DECIDE ◄────────────────────┐
+       │                         │
+       ├── ToolRequested         │
+       │       │                 │
+       │       ▼                 │
+       │    EXECUTE              │
+       │       │                 │
+       │       ▼                 │
+       │   Observation ──────────┘
+       │
+       └── FinalAnswer
+               │
+               ▼
+        ResearchResponse
+
+A tool result is no longer automatically treated as the final agent answer.
+
+Instead:
+
+    ToolResult
+        │
+        ▼
+    Observation
+        │
+        ▼
+    AgentState
+        │
+        ▼
+    next model turn
+
+This is the central architectural change introduced by M05.
+
+---
+
+# 26. AgentState and Observation
+
+`AgentState` represents provider-independent execution state maintained during one agent run.
+
+Current structure:
+
+- `question`
+- `observations`
+- `step_count`
+
+Conceptually:
+
+    AgentState
+    ├── question
+    ├── observations
+    └── step_count
+
+`Observation` represents information obtained after executing a tool.
+
+Current fields:
+
+- `tool_name`
+- `source`
+- `content`
+
+The state deliberately does not contain:
+
+- OpenAI client objects
+- `response_id`
+- `call_id`
+- model configuration
+- tool implementations
+- prompts
+- `max_steps`
+
+Provider metadata belongs at the provider boundary.
+
+Execution policy such as `max_steps` belongs to `ResearchAgent`.
+
+Final response sources are derived from accumulated observations rather than duplicated as separate state.
+
+---
+
+# 27. Model Turns
+
+v0.5 introduces an explicit representation of the result of one model interaction.
+
+The provider-independent model turn is:
+
+    ModelTurnResult
+    ├── ToolRequested
+    │      └── ToolCall
+    │
+    └── FinalAnswer
+           └── answer
+
+`ToolRequested` means that application-controlled tool execution is required before the model interaction can continue.
+
+`FinalAnswer` represents a termination condition for the Agent Loop.
+
+This keeps model-turn semantics separate from provider-specific response objects.
+
+---
+
+# 28. ModelSession Protocol
+
+`ModelSession` defines the contract for iterative model interaction within one agent run.
+
+Conceptually:
+
+    start(question) -> ModelTurnResult
+
+    continue_with(observation) -> ModelTurnResult
+
+The first method begins the interaction.
+
+The second continues it after the application has executed a requested tool and produced an `Observation`.
+
+This abstraction solves a concrete M05 requirement:
+
+**model continuation requires state that is not part of the domain-level AgentState.**
+
+The generic Agent Loop therefore depends on `ModelSession`, while provider-specific continuation metadata remains behind the adapter boundary.
+
+---
+
+# 29. OpenAIModelSession
+
+`OpenAIModelSession` implements `ModelSession` for the OpenAI Responses API.
+
+Internally it maintains provider-specific continuation metadata:
+
+- `_previous_response_id`
+- `_pending_call_id`
+
+These values are deliberately not exposed through:
+
+- `AgentState`
+- `Observation`
+- `ToolCall`
+- `ResearchResponse`
+
+The OpenAI continuation path is:
+
+    OpenAI response
+         │
+         ├── response.id
+         │
+         └── function_call.call_id
+                    │
+                    ▼
+              ToolRequested
+                    │
+                    ▼
+              ToolExecutor
+                    │
+                    ▼
+               Observation
+                    │
+                    ▼
+         function_call_output
+                    │
+                    ▼
+         previous_response_id
+                    │
+                    ▼
+           next OpenAI response
+
+When the next response contains another supported `function_call`, the loop continues.
+
+When it contains final output text, the adapter returns `FinalAnswer`.
+
+The adapter also rejects invalid continuation states:
+
+- continuation before the session has started
+- continuation when there is no pending Tool Call
+
+---
+
+# 30. Loop Control and Termination
+
+`ResearchAgent` owns the generic Agent Loop.
+
+When a `ModelSession` is configured, the execution path is:
+
+    create AgentState
+          │
+          ▼
+    ModelSession.start()
+          │
+          ▼
+       model turn
+          │
+          ├── FinalAnswer ──────► ResearchResponse
+          │
+          └── ToolRequested
+                  │
+                  ▼
+             max_steps check
+                  │
+                  ▼
+             ToolExecutor
+                  │
+                  ▼
+             Observation
+                  │
+                  ▼
+           update AgentState
+                  │
+                  ▼
+      ModelSession.continue_with()
+                  │
+                  └──────────────► next model turn
+
+`max_steps` is an execution policy configured on `ResearchAgent`.
+
+It limits the number of tool executions permitted during one run.
+
+The limit is checked before executing an additional requested tool.
+
+This protects the application against uncontrolled or infinite tool loops.
+
+The current default is:
+
+    max_steps = 5
+
+v0.5 deliberately keeps loop control explicit rather than delegating it to LangGraph.
+
+---
+
+# 31. Testing Architecture — v0.5
+
+The v0.5 architecture is validated at multiple levels.
+
+## State and model-turn tests
+
+Tests validate:
+
+- default AgentState values
+- Observation storage
+- non-empty questions
+- non-negative step counts
+- ToolRequested construction
+- FinalAnswer construction and validation
+
+## Agent Loop tests
+
+Tests validate:
+
+- repeated Tool Calls
+- accumulation of observations
+- final answer termination
+- source derivation from observations
+- `max_steps` enforcement
+- rejection of invalid `max_steps`
+
+## OpenAIModelSession tests
+
+Tests validate:
+
+- initial native Tool Call parsing
+- `call_id` capture
+- `response_id` continuation
+- `function_call_output` construction
+- conversion of final provider output into `FinalAnswer`
+- rejection of continuation before `start()`
+- rejection of continuation without a pending Tool Call
+
+## Integration test
+
+An offline integration test validates:
+
+    ResearchAgent
+         │
+         ▼
+    OpenAIModelSession
+         │
+         ▼
+     ToolRequested
+         │
+         ▼
+     ToolExecutor
+         │
+         ▼
+      Observation
+         │
+         ▼
+    function_call_output
+         │
+         ▼
+      FinalAnswer
+         │
+         ▼
+    ResearchResponse
+
+External systems are replaced by deterministic fakes.
+
+The complete repository test suite currently contains:
+
+**39 passing tests**
+
+Ruff also completes successfully.
+
+No API key or network connection is required by the automated test suite.
+
+---
+
+# 32. Architecture Principles and Direction
+
+The architecture currently follows these principles:
+
+1. **Separation of concerns**
+   Orchestration, decisions, model integration, provider continuation and tool execution have explicit boundaries.
+
+2. **Explicit contracts**
+   Protocols and validated models define communication between components.
 
 3. **Dependency Injection**
    External behaviour can be replaced by deterministic test doubles.
@@ -600,26 +1005,25 @@ The request successfully reached the API service, but model inference could not 
    Provider-generated arguments are validated before execution.
 
 5. **Incremental complexity**
-   New abstractions are introduced only when required.
+   New abstractions are introduced only when required by a concrete capability.
 
 6. **Deterministic testing**
    Automated tests do not depend on API keys or network access.
 
 7. **Provider isolation**
-   OpenAI-specific behaviour remains concentrated in the provider adapter.
+   Provider-specific continuation metadata remains inside the provider adapter.
 
-8. **Framework independence first**
-   Fundamental agent concepts are implemented before introducing LangGraph.
+8. **Controlled execution**
+   Agent loops have explicit termination semantics and bounded tool execution.
 
----
-
-# 28. Architecture Direction
+9. **Framework independence first**
+   Fundamental agent mechanisms are implemented before introducing LangGraph.
 
 The long-term objective is not to accumulate abstractions.
 
 The objective is to evolve the architecture only when each new capability creates a concrete engineering requirement.
 
-The progression is therefore:
+The progression is:
 
     Basic Agent
         ↓
@@ -640,5 +1044,9 @@ The progression is therefore:
     Evaluation & Observability
         ↓
     Production
+
+The next architectural capability is:
+
+**M06 — Planning → Research Agent v0.6**
 
 Each stage should remain understandable, testable and traceable to the architectural problem it solves.
