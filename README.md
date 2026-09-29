@@ -39,7 +39,7 @@ Framework abstractions are added only after the underlying engineering concepts 
 
 ### Project 01 — Research Agent
 
-**Current version: v0.4 — Tool Calling**
+**Current version: v0.5 — Agent Loop & State**
 
 Completed modules:
 
@@ -50,7 +50,7 @@ Completed modules:
 | M02 | v0.2 | Decision Layer | ✅ Completed |
 | M03 | v0.3 | LLM Decision Maker | ✅ Completed |
 | M04 | v0.4 | Tool Calling | ✅ Completed |
-| M05 | v0.5 | Agent Loop & State | ⏳ Next |
+| M05 | v0.5 | Agent Loop & State | ✅ Completed |
 | M06 | v0.6 | Planning | ⏳ Planned |
 | M07 | v0.7 | LangGraph | ⏳ Planned |
 | M08 | v0.8 | Memory | ⏳ Planned |
@@ -65,24 +65,23 @@ The complete progression is documented in:
 
 ## 🏗️ Research Agent Architecture
 
-The Research Agent currently separates orchestration, decisions, model integration and tool execution.
+The Research Agent currently separates orchestration, execution state, model integration and tool execution.
 
     ResearchRequest
           │
           ▼
     ResearchAgent
           │
-          ├──────────── Decision Layer
+          ├──────────── AgentState
           │                 │
-          │                 ├── DecisionMaker
-          │                 ├── DeterministicDecisionMaker
-          │                 └── LLMDecisionMaker
+          │                 ├── observations
+          │                 └── step_count
           │
-          ├──────────── Model Integration
+          ├──────────── ModelSession
           │                 │
-          │                 ├── ModelClient
-          │                 ├── ToolCallingClient
-          │                 └── OpenAIModelClient
+          │                 ├── ToolRequested
+          │                 ├── FinalAnswer
+          │                 └── OpenAIModelSession
           │
           └──────────── Tool Layer
                             │
@@ -93,7 +92,9 @@ The Research Agent currently separates orchestration, decisions, model integrati
 
 The architecture is intentionally incremental.
 
-Research Agent v0.4 implements native model Tool Calling while keeping validation and execution under application control.
+Research Agent v0.5 adds a controlled Agent Loop while keeping tool execution and loop policy under application control.
+
+The Decision Layer and one-shot Tool Calling abstractions from previous versions remain available as compatibility paths.
 
 ---
 
@@ -132,6 +133,46 @@ The current search implementation remains simulated. Native Tool Calling and the
 
 ---
 
+## 🔁 Agent Loop & State — v0.5
+
+Research Agent v0.5 extends Tool Calling into controlled iterative execution:
+
+    Question
+       │
+       ▼
+    AgentState
+       │
+       ▼
+    ModelSession
+       │
+       ├── FinalAnswer ─────────────► ResearchResponse
+       │
+       └── ToolRequested
+                │
+                ▼
+           ToolExecutor
+                │
+                ▼
+           Observation
+                │
+                ▼
+        update AgentState
+                │
+                ▼
+    ModelSession.continue_with()
+                │
+                └───────────────────► next model turn
+
+Tool results are converted into observations and can influence subsequent model turns.
+
+`OpenAIModelSession` keeps provider-specific continuation metadata such as `response_id` and `call_id` outside the provider-independent agent state.
+
+Agent execution is bounded by `max_steps` to prevent uncontrolled Tool Calling loops.
+
+The complete automated test suite currently contains **39 passing tests**.
+
+---
+
 ## 🧩 Core Engineering Concepts
 
 The project currently demonstrates:
@@ -148,6 +189,10 @@ The project currently demonstrates:
 - provider boundary validation
 - deterministic test doubles
 - application-controlled tool execution
+- explicit Agent State and observations
+- iterative model sessions
+- provider continuation isolation
+- bounded Agent Loops with `max_steps`
 - incremental architecture evolution
 
 ---
@@ -338,27 +383,32 @@ The project follows several core principles:
 
 ## 🔜 Next Step
 
-### M05 — Agent Loop & State
+### M06 — Planning
 
-Research Agent v0.5 will evolve from a single Tool Call execution towards controlled iterative execution:
+Research Agent v0.6 will introduce explicit planning and decomposition of complex tasks.
 
-    decide
-       ↓
-     tool
-       ↓
-    observe
-       ↓
-    decide
-       ↓
-     tool
-       ↓
-      ...
-       ↓
-     final
+The next architectural progression is:
 
-This stage will introduce execution state, observations, model continuation, termination conditions and controlled iteration limits.
+    User Goal
+       │
+       ▼
+      Plan
+       │
+       ▼
+    Task Steps
+       │
+       ▼
+    Controlled Execution
+       │
+       ▼
+    Replanning when required
+       │
+       ▼
+    Final Answer
 
-Planning, LangGraph and memory remain deliberately outside M05 until their respective modules.
+M06 will focus on task decomposition, explicit plans, plan execution and controlled replanning.
+
+LangGraph remains deliberately postponed until M07, after the underlying Planning concepts are understood independently.
 
 ---
 
